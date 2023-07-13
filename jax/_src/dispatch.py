@@ -500,11 +500,11 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
   cache_key = compilation_cache.get_cache_key(
       computation, devices, compile_options, backend)
 
-  cached_executable = _cache_read(module_name, cache_key, compile_options,
+  executable_and_time = _cache_read(module_name, cache_key, compile_options,
                                   backend)
-  if cached_executable is not None:
+  if executable_and_time is not None:
     logger.info("Persistent compilation cache hit for '%s'", module_name)
-    return cached_executable
+    return executable_and_time[0]
   else:
     start_time = time.monotonic()
     executable = backend_compile(backend, computation,
@@ -517,10 +517,11 @@ def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options, backend
-) -> Optional[xc.LoadedExecutable]:
+) -> Optional[list]:
   """Looks up `computation` in the persistent compilation cache."""
   try:
-    return compilation_cache.get_executable(cache_key, compile_options, backend)
+    return compilation_cache.get_executable_and_time(
+        cache_key, compile_options, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -557,8 +558,8 @@ def _cache_write(cache_key: str,
           compile_time_secs)
 
   try:
-    compilation_cache.put_executable(cache_key, module_name, executable,
-                                     backend)
+    compilation_cache.put_executable_and_time(
+        cache_key, module_name, executable, backend, int(compile_time_secs))
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise

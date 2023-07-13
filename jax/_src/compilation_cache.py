@@ -40,6 +40,8 @@ from jax._src.lib.mlir import passmanager as pm
 from jax._src.lib.mlir import jax as mlir_jax
 
 
+COMPILE_TIME_PREFIX = "ct"
+
 logger = logging.getLogger(__name__)
 
 _cache: Optional[CacheInterface] = None
@@ -67,49 +69,66 @@ def initialize_cache(path):
   logger.warning("Initialized persistent compilation cache at %s", path)
 
 
-def get_executable(
+def get_executable_and_time(
     cache_key: str, compile_options, backend
-) -> Optional[xla_client.LoadedExecutable]:
-  """Returns the cached executable if present, or None otherwise."""
-  assert (
-      _cache is not None
-  ), "initialize_cache must be called before you can call get_executable()"
-  serialized_executable = _cache.get(cache_key)
-  if not serialized_executable:
+) -> Optional[list]:
+  """Returns a list of cached executable and compile time if present, or None
+
+  otherwise.
+  """
+  assert _cache is not None, (
+      "initialize_cache must be called before you can call"
+      " get_executable_and_time()"
+  )
+  cache_entry = _cache.get(cache_key)
+  if not cache_entry:
     return None
   if zstandard:
     decompressor = zstandard.ZstdDecompressor()
-    serialized_executable = decompressor.decompress(serialized_executable)
+    cache_entry = decompressor.decompress(cache_entry)
   else:
-    serialized_executable = zlib.decompress(serialized_executable)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, compile_options
-  )
-  return xla_executable_deserialized
+    cache_entry = zlib.decompress(cache_entry)
+  prefix = COMPILE_TIME_PREFIX.encode()
+  if cache_entry.startswith(prefix):
+    prefix_len = len(prefix)
+    compile_time = cache_entry[prefix_len : prefix_len + 4]
+    serialized_executable = cache_entry[prefix_len + 4 :]
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, compile_options
+    )
+    return [xla_executable_deserialized, int.from_bytes(compile_time, "big")]
+  else:
+    return [backend.deserialize_executable(cache_entry, compile_options), None]
 
 
-def put_executable(
+def put_executable_and_time(
     cache_key: str,
     module_name: str,
     executable: xla_client.LoadedExecutable,
     backend,
+    compile_time
 ) -> None:
-  """Adds 'executable' to the cache, possibly evicting older entries."""
+  """Adds 'executable' and compile time to the cache, possibly evicting older entries."""
   assert (
       _cache is not None
-  ), "initialize_cache must be called before you can call put_executable()"
+  ), "initialize_cache must be called before you can call put_executable_and_time()"
   logger.info(
       "Writing %s to persistent compilation cache with key %s.",
       module_name,
       cache_key,
   )
   serialized_executable = backend.serialize_executable(executable)
+  executable_and_time = b"".join([
+      COMPILE_TIME_PREFIX.encode(),
+      int(compile_time).to_bytes(4, "big"),
+      serialized_executable,
+  ])
   if zstandard:
     compressor = zstandard.ZstdCompressor()
-    serialized_executable = compressor.compress(serialized_executable)
+    executable_and_time = compressor.compress(executable_and_time)
   else:
-    serialized_executable = zlib.compress(serialized_executable)
-  _cache.put(cache_key, serialized_executable)
+    executable_and_time = zlib.compress(executable_and_time)
+  _cache.put(cache_key, executable_and_time)
 
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
@@ -130,8 +149,9 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
-                  backend) -> str:
+def get_cache_key(
+    module: ir.Module, devices: np.ndarray, compile_options, backend
+) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
   get_cache_key takes in the MLIR module and compile_options of a program

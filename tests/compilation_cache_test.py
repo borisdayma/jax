@@ -18,6 +18,7 @@ import math
 import os
 import random
 import sys
+import time
 import tempfile
 import unittest
 from unittest import SkipTest, mock
@@ -273,7 +274,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       backend = xla_bridge.get_backend()
       key = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(
-          cc.get_executable(key, compile_options, backend), None
+          cc.get_executable_and_time(key, compile_options, backend), None
       )
 
   def test_diff_executables(self):
@@ -285,13 +286,18 @@ class CompilationCacheTest(jtu.JaxTestCase):
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
+      compile_start_time = time.monotonic()
       executable1 = backend.compile(computation1, compile_options)
+      compile_time1 = int(time.monotonic() - compile_start_time)
       executable2 = backend.compile(computation2, compile_options)
-      cc.put_executable("key1", "computation1", executable1, backend)
-      cc.put_executable("key2", "computation2", executable2, backend)
+      compile_time2 = int(time.monotonic() - compile_start_time - compile_time1)
+      cc.put_executable_and_time(
+          "key1", "computation1", executable1, backend, compile_time1)
+      cc.put_executable_and_time(
+          "key2", "computation2", executable2, backend, compile_time2)
       self.assertNotEqual(
-          cc.get_executable("key1", compile_options, backend),
-          cc.get_executable("key2", compile_options, backend),
+          cc.get_executable_and_time("key1", compile_options, backend)[0],
+          cc.get_executable_and_time("key2", compile_options, backend)[0]
       )
 
   def test_put_executable(self):
@@ -307,10 +313,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
+      compile_start_time = time.monotonic()
       executable = backend.compile(str(computation), compile_options)
+      compile_time = int(time.monotonic() - compile_start_time)
       key = cc.get_cache_key(computation, devices, compile_options, backend)
-      cc.put_executable(key, "alambda", executable, backend)
-      deserialized_executable = cc.get_executable(key, compile_options, backend)
+      cc.put_executable_and_time(key, "alambda", executable, backend, compile_time)
+      executable_and_time = cc.get_executable_and_time(
+          key, compile_options, backend)
+      deserialized_executable = executable_and_time[0]
       inputs_to_executable = (
           np.array(1, dtype=np.int32),
           np.array(2, dtype=np.int32),
@@ -322,6 +332,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
           deserialized_executable, inputs_to_executable, backend
       )
       self.assertEqual(expected, actual)
+      self.assertEqual(compile_time, executable_and_time[1])
 
   def test_pmap(self):
     with tempfile.TemporaryDirectory() as tmpdir:
