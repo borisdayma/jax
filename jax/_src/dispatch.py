@@ -524,12 +524,33 @@ def _cache_read(
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
+    # print current date
+    import datetime, sys, jax, jaxlib
+    warnings.warn(f"Current date: {datetime.datetime.now()}")
     warnings.warn(
         f"Error reading persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
     warnings.warn(
         f"Input args:\nmodule_name: {module_name}\ncache_key: {cache_key}\ncompile_options: {dir(compile_options)}\nbackend: {dir(backend)}"
     )
+    commands = [
+        "sys.version",
+        "jax.__version__",
+        "jaxlib.__version__",
+        "jax.lib.xla_bridge.get_backend().platform",
+        "jax.lib.xla_bridge.get_backend().platform_version",
+        "jax.lib.xla_bridge.get_backend().runtime_type",
+        "jax.devices()[0].device_kind",
+    ]
+
+    for command in commands:
+        try:
+            res = eval(command)
+        except Exception as e:
+            res = str(e)
+        print(f"{command}\n{res}\n")
+
+
     return None
 
 
