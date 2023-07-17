@@ -528,7 +528,7 @@ def _cache_read(
         f"Error reading persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
     warnings.warn(
-        f"Input args:\nmodule_name: {module_name}\ncache_key: {cache_key}\ncompile_options: {compile_options}\nbackend: {backend}"
+        f"Input args:\nmodule_name: {module_name}\ncache_key: {cache_key}\ncompile_options: {dir(compile_options)}\nbackend: {dir(backend)}"
     )
     return None
 
